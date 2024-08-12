@@ -8,8 +8,10 @@ from util import *
 import asyncio
 import pytz
 from random import *
-import luck
+import random_things
 import re
+import io
+import aiohttp
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -18,11 +20,15 @@ intents.members = True
 
 startDateTime = datetime.utcnow()
 
+kst = pytz.timezone('Asia/Seoul')
+utc_now = datetime.utcnow()
+kst_now = utc_now.replace(tzinfo=pytz.utc).astimezone(kst)
+
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.tree.command(name="도움말", description="못말이의 명령어 사용법을 알려줘요!")
 async def help(interaction: discord.Interaction):
-    embed = discord.Embed(title="명령어", description="!오늘의운세 : 오늘의 운세를 볼 수 있어요!\n!마법의소라고동님 : 무언가에 대해 정할 수 있어요!", color=discord.Color.from_rgb(119,79,219))
+    embed = discord.Embed(title="명령어", description="!오늘의운세 : 오늘의 운세를 볼 수 있어요!\n!마법의소라고동님 : 무언가에 대해 정할 수 있어요!\n!(메뉴,치킨,배달)추천 : 무엇을 먹어야할지 못말이가 정해줘요!\n!고민 : 고민에 대한 답변을 말해줘요!\n!주사위 : 1부터 6중에 숫자 하나를 골라줘요!\n!번호뽑기 : 1부터 99 사이의 숫자 하나를 뽑아줘요!\n!노래추천 : 못말이가 좋아하는 노래 중 하나를 추천해줘요!", color=discord.Color.from_rgb(119,79,219))
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
@@ -35,7 +41,7 @@ async def embedGen(interaction:discord.Interaction,채널:str,타이틀:str,본�
     if 본문=="" and 링크=="": embed = discord.Embed(title=타이틀, color=color)
     elif 본문=="" and 링크!="": embed = discord.Embed(title=타이틀, description=getBox(링크), color=color)
     elif 링크=="" and 본문!="": embed = discord.Embed(title=타이틀, description=본문, color=color)
-    else: embed = discord.Embed(title=타이틀, description=f"**{본문}**\n```"+링크+"```", color=color)
+    else: embed = discord.Embed(title="타이틀` `타이틀", description=f"**{본문}**\n```"+링크+"```", color=color)
 
     channel = bot.get_channel(int(채널))
     await channel.send(embed=embed)
@@ -46,8 +52,8 @@ async def embedGen(interaction:discord.Interaction,채널:str,타이틀:str,본�
 async def genNormalMsg(interaction:discord.interactions,채널:str,내용:str):
     채널 = re.sub(r'[^\w\s]', '', 채널)
 
-    await bot.get_channel(채널).send(내용)
-    await interaction.response.send_message(f"", ephemeral=True)
+    await bot.get_channel(int(채널)).send(내용)
+    await interaction.response.send_message(f"전송 완료.", ephemeral=True)
 
 @bot.tree.command(name="초대링크", description="관리자용 명령어. 초대링크 전송")
 @commands.has_permissions(administrator=True)
@@ -63,16 +69,33 @@ async def genInviteMsg(interaction:discord.interactions, div:int):
     await bot.get_channel(1235186405081354282).send(msg[div])
     await interaction.response.send_message(f"초대링크를 성공적으로 전송했어요.", ephemeral=True)
 
+@bot.tree.command(name="반응추가", description="관리자용 명령어. 반응 추가")
+@commands.has_permissions(administrator=True)
+async def addEmoji(interaction:discord.interactions, 메세지id:str, 이모지:str, 채널:str = "1235186405081354282"):
+    try:
+        채널 = re.sub(r'[^\w\s]', '', 채널)
+        channel = bot.get_channel(int(채널))
+        
+        message = await channel.fetch_message(int(메세지id))
+
+        await message.add_reaction(이모지)
+        await interaction.response.send_message(f"성공적으로 반응을 추가했어요.", ephemeral=True)
+    except discord.HTTPException as e:
+        await interaction.response.send_message(f"오류가 발생했습니다: {e}")
 @bot.event
 async def on_ready():
         synced = await bot.tree.sync()
+        await bot.change_presence(
+        status=discord.Status.online, 
+        activity=discord.Game("/도움말")
+    )
         print(f'Logged in as {bot.user}')
 
 # 일반 User 사용 가능 기능
     
 @bot.command(name="오늘의운세")
 async def genFortune(ctx):
-    await ctx.send(luck.getFortune())
+    await ctx.send(random_things.getFortune())
 
 
 @bot.command(name="마법의소라고동님")
@@ -88,6 +111,41 @@ async def genRandomBool(ctx,*txt:str):
         await ctx.send(choice(["그래.","그럼."]))
     else:
         await ctx.send(choice(["아니.","안 돼."]))
+
+@bot.command(name="고민")
+async def answerOfLife(ctx,*txt):
+    msg = ""
+    for i in txt:
+        msg+=i
+    if 1 > len(msg.replace(" ","")):
+        await ctx.send("고민을 말해주세요.")
+        return
+    await ctx.send(choice(random_things.answers))
+
+
+@bot.command(name="메뉴추천", aliases=["저메추","점메추","오점메추","오저메추","뭐먹지"])
+async def menuRecommend(ctx):
+    await ctx.send(choice(random_things.dining_out_menu)+choice([" 먹자", " 어때", " 먹어", " 먹어라"]))
+
+@bot.command(name="치킨추천")
+async def chickenRecommend(ctx):
+    await ctx.send(choice(random_things.chicken_brands)+choice([" 먹자", " 어때", " 먹어", " 먹어라"]))
+
+@bot.command(name="배달추천")
+async def menuRecommend(ctx):
+    await ctx.send(choice(random_things.dining_out_menu)+choice([" 시키자", " 어때", " 시켜", " 시켜라"]))
+
+@bot.command(name="주사위")
+async def rollDice(ctx):
+    await ctx.send(randrange(1,7))
+
+@bot.command(name="번호뽑기",aliases=["번뽑"])
+async def rollDice(ctx):
+    await ctx.send(randrange(1,100))
+
+@bot.command(name="노래추천")
+async def musicRecommend(ctx):
+    await ctx.send(choice(random_things.playList))
 
 
 # 특정 채널에서만 명령어를 받을 수 있도록 필터링하는 검사 함수
@@ -248,6 +306,155 @@ async def get_at_users(ctx, start_date: str, end_date: str):
         await ctx.send(embed=embed)
     else:
         await ctx.send("No messages found in that date range.")
+
+
+################################
+@bot.event
+async def on_voice_state_update(member, before, after):
+    # 메시지를 보낼 채널 ID를 설정합니다.
+    channel = bot.get_channel(1270314441648640044)
+    name = member.nick if member.nick else member.name
+    utc_now = datetime.utcnow()
+    kst_now = utc_now.replace(tzinfo=pytz.utc).astimezone(kst)
+
+    if before.channel is None and after.channel is not None:
+        # 사용자가 음성 채널에 입장했을 때
+        embed = discord.Embed(title="음성 채널 입장", description=f"{kst_now.strftime('%Y-%m-%d %H:%M:%S')}\n{name}님이 음성 채널 {after.channel.name}에 들어왔습니다.", color=discord.Color.green())
+        await channel.send(embed=embed)
+    elif before.channel is not None and after.channel is None:
+        # 사용자가 음성 채널에서 나갔을 때
+        embed = discord.Embed(title="음성 채널 퇴장", description=f"{kst_now.strftime('%Y-%m-%d %H:%M:%S')}\n{name}님이 음성 채널 {before.channel.name}을 떠났습니다.", color=discord.Color.red())
+        await channel.send(embed=embed)
+    # 사용자가 음성 채널을 변경했을 때
+    elif before.channel is not None and after.channel is not None and before.channel.id != after.channel.id:
+        embed = discord.Embed(
+            title="음성 채널 변경",
+            description=f"{kst_now.strftime('%Y-%m-%d %H:%M:%S')}\n{name}님이 {before.channel.name} 채널에서 {after.channel.name} 채널로 이동했습니다.",
+            color=discord.Color.blue()
+        )
+        await channel.send(embed=embed)
+
+@bot.event
+async def on_message_delete(message):
+    if message.author.bot or is_only_emoji(message):
+        return
+    
+    # 메시지를 보낼 채널 ID를 설정합니다.
+    log_channel_id = 1270321680111370322  # 여기에 원하는 채널 ID를 입력하세요.
+    log_channel = bot.get_channel(log_channel_id)
+    nickname = message.author.nick if message.author.nick else message.author.name
+    utc_now = datetime.utcnow()
+    kst_now = utc_now.replace(tzinfo=pytz.utc).astimezone(kst)
+    content = message.content if message.content else "첨부파일"
+
+    if log_channel is not None:
+        if message.attachments:
+            for attachment in message.attachments:
+                # 파일을 다운로드하고 로그 채널에 전송
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(attachment.url) as resp:
+                        if resp.status == 200:
+                            data = io.BytesIO(await resp.read())
+                            discord.Embed(title="채팅 삭제",
+                              description=f"{kst_now.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                              f"{nickname}님의 메시지가 삭제되었습니다.\n"
+                               f'**채널**: {message.channel.name}',
+                              color=discord.Color.red())
+                            embed.set_image(url=attachment.url,file=discord.File(data, filename=attachment.filename))
+                        else:
+                            embed = discord.Embed(title="채팅 삭제",
+                              description=f"{kst_now.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                              f"{nickname}님의 메시지가 삭제되었습니다.\n첨부 파일을 다운로드할 수 없습니다.\n"
+                              f'**내용**: {content}\n'
+                               f'**채널**: {message.channel.name}',
+                              color=discord.Color.red())
+        else:
+            embed = discord.Embed(title="채팅 삭제",
+                              description=f"{kst_now.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                              f"{nickname}님의 메시지가 삭제되었습니다.\n"
+                              f'**내용**: {content}\n'
+                               f'**채널**: {message.channel.name}',
+                              color=discord.Color.red())
+            
+        # 답장한 메시지라면
+        if message.reference and message.reference.resolved:
+            replied_message = message.reference.resolved
+            replied_nickname = replied_message.author.nick if replied_message.author.nick else replied_message.author.name
+            if isinstance(replied_message, discord.Message):
+                embed.add_field(name="답장 대상",
+                                value=f'**작성자**: {replied_nickname}\n'
+                                      f'**메시지 내용**: {replied_message.content or "내용 없음"}')
+                
+        await log_channel.send(embed=embed)
+
+
+@bot.event
+async def on_message_edit(before, after):
+    if before.author.bot:
+        return
+    
+    if before.content == after.content:
+        return
+    
+    # 메시지를 보낼 채널 ID를 설정합니다.
+    log_channel_id = 1270321680111370322  # 여기에 원하는 채널 ID를 입력하세요.
+    log_channel = bot.get_channel(log_channel_id)
+    utc_now = datetime.utcnow()
+    kst_now = utc_now.replace(tzinfo=pytz.utc).astimezone(kst)
+    nickname = before.author.nick if before.author.nick else before.author.name
+
+    if log_channel is not None:
+        # 수정된 메시지 정보
+        embed = discord.Embed(
+            title="채팅 수정",
+            description=f"{kst_now.strftime('%Y-%m-%d %H:%M:%S')} \n"
+                        f'**작성자**: {nickname}\n'
+                        f'**채널**: {before.channel.name}',
+            color=discord.Color.orange()
+        )
+        embed.add_field(name="수정 전 내용", value=before.content or "내용 없음", inline=False)
+        embed.add_field(name="수정 후 내용", value=after.content or "내용 없음", inline=False)
+        embed.set_footer(text=f"메시지 ID: {before.id}")
+
+        await log_channel.send(embed=embed)
+
+@bot.event
+async def on_member_join(member):
+    log_channel_id = 1270534169554063370
+    log_channel = bot.get_channel(log_channel_id)
+    kst_now = utc_now.replace(tzinfo=pytz.utc).astimezone(kst)
+    nickname = member.nick if member.nick else member.name
+    
+    if log_channel is not None:
+        embed = discord.Embed(
+            title="멤버 입장",
+            description=f"{kst_now.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        f'{nickname}님이 서버에 들어왔습니다.',
+            color=discord.Color.green()
+        )
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.set_footer(text=f"ID: {member.id}")
+        await log_channel.send(embed=embed)
+
+@bot.event
+async def on_member_remove(member):
+    log_channel_id = 1270534169554063370
+    log_channel = bot.get_channel(log_channel_id)
+    utc_now = datetime.utcnow()
+    kst_now = utc_now.replace(tzinfo=pytz.utc).astimezone(kst)
+    nickname = member.nick if member.nick else member.name
+    
+    if log_channel is not None:
+        embed = discord.Embed(
+            title="멤버 탈퇴",
+            description=f"{kst_now.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        f'{nickname}님이 서버를 나갔습니다.',
+            color=discord.Color.red()
+        )
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.set_footer(text=f"ID: {member.id}")
+        await log_channel.send(embed=embed)
+        
 
 
 bot.run(TOKEN)
