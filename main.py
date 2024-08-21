@@ -131,6 +131,10 @@ async def menuRecommend(ctx):
 async def chickenRecommend(ctx):
     await ctx.send(choice(random_things.chicken_brands)+choice([" 먹자", " 어때", " 먹어", " 먹어라"]))
 
+@bot.command(name="야식추천")
+async def yasikRecommend(ctx):
+    await ctx.send(choice(random_things.yasik_menu)+choice([" 먹자", " 어때", " 먹어", " 먹어라"]))
+
 @bot.command(name="배달추천")
 async def menuRecommend(ctx):
     await ctx.send(choice(random_things.dining_out_menu)+choice([" 시키자", " 어때", " 시켜", " 시켜라"]))
@@ -156,6 +160,11 @@ def is_admin(ctx):
 @bot.command(name="genSticky")
 @commands.check(is_admin)
 async def stickyMsg(msg):
+    return
+
+@bot.command(name="출석", aliases=["출첵"])
+async def attendance(ctx):
+    print(f"{ctx.author.name}님이 출석하였습니다.")
     return
 
 @bot.command(name="업타임")
@@ -347,6 +356,9 @@ async def on_message_delete(message):
     kst_now = utc_now.replace(tzinfo=pytz.utc).astimezone(kst)
     content = message.content if message.content else "첨부파일"
 
+    KST = timezone(timedelta(hours=9))  # 한국 표준시
+    created_at = message.created_at.astimezone(KST).strftime('%Y-%m-%d %H:%M:%S') if message.created_at.astimezone(KST).strftime('%Y-%m-%d %H:%M:%S') else None
+
     if log_channel is not None:
         if message.attachments:
             for attachment in message.attachments:
@@ -358,7 +370,8 @@ async def on_message_delete(message):
                             discord.Embed(title="채팅 삭제",
                               description=f"{kst_now.strftime('%Y-%m-%d %H:%M:%S')}\n"
                               f"{nickname}님의 메시지가 삭제되었습니다.\n"
-                               f'**채널**: {message.channel.name}',
+                               f'**채널**: {message.channel.name}\n'
+                               f'**작성 시간**: {created_at}',
                               color=discord.Color.red())
                             embed.set_image(url=attachment.url,file=discord.File(data, filename=attachment.filename))
                         else:
@@ -366,14 +379,16 @@ async def on_message_delete(message):
                               description=f"{kst_now.strftime('%Y-%m-%d %H:%M:%S')}\n"
                               f"{nickname}님의 메시지가 삭제되었습니다.\n첨부 파일을 다운로드할 수 없습니다.\n"
                               f'**내용**: {content}\n'
-                               f'**채널**: {message.channel.name}',
+                               f'**채널**: {message.channel.name}\n'
+                               f'**작성 시간**: {created_at}',
                               color=discord.Color.red())
         else:
             embed = discord.Embed(title="채팅 삭제",
                               description=f"{kst_now.strftime('%Y-%m-%d %H:%M:%S')}\n"
                               f"{nickname}님의 메시지가 삭제되었습니다.\n"
                               f'**내용**: {content}\n'
-                               f'**채널**: {message.channel.name}',
+                               f'**채널**: {message.channel.name}\n'
+                               f'**작성 시간**: {created_at}',
                               color=discord.Color.red())
             
         # 답장한 메시지라면
