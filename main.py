@@ -12,11 +12,21 @@ import random_things
 import re
 import io
 import aiohttp
+import sqlite3
 
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
 intents.members = True
+
+# 하루 종합 데이터 초기화
+daily_chat_count = 0
+members_joined_today = 0
+members_left_today = 0
+
+def connect_db():
+    return sqlite3.connect('discord_logs.db')
+
 
 startDateTime = datetime.utcnow()
 
@@ -84,12 +94,13 @@ async def addEmoji(interaction:discord.interactions, 메세지id:str, 이모지:
         await interaction.response.send_message(f"오류가 발생했습니다: {e}")
 @bot.event
 async def on_ready():
-        synced = await bot.tree.sync()
-        await bot.change_presence(
-        status=discord.Status.online, 
-        activity=discord.Game("/도움말")
-    )
-        print(f'Logged in as {bot.user}')
+    synced = await bot.tree.sync()
+    await bot.change_presence(
+    status=discord.Status.online, 
+    activity=discord.Game("/도움말")
+)
+
+    print(f'Logged in as {bot.user}')
 
 # 일반 User 사용 가능 기능
     
@@ -180,7 +191,7 @@ async def uptime(ctx):
 # @tasks.loop(hours=1)
 # async def send_invite():
 #     chan = bot.get_channel(1235186405081354282)
-#     dt = datetime.now()
+#     dt = kst_now
 #     timezone_kst = timezone(timedelta(hours=9))
 #     dt_kst = dt.astimezone(timezone_kst)
 #     print(f"h{dt_kst.hour} m{dt_kst.minute}")
@@ -318,6 +329,7 @@ async def get_at_users(ctx, start_date: str, end_date: str):
 
 
 ################################
+voice_channel_join_times = {}
 @bot.event
 async def on_voice_state_update(member, before, after):
     # 메시지를 보낼 채널 ID를 설정합니다.
@@ -327,10 +339,46 @@ async def on_voice_state_update(member, before, after):
     kst_now = utc_now.replace(tzinfo=pytz.utc).astimezone(kst)
 
     if before.channel is None and after.channel is not None:
-        # 사용자가 음성 채널에 입장했을 때
+        try:
+            conn = connect_db()
+            c = conn.cursor()
+
+            # 사용자가 입장한 시간을 기록
+            join_time = datetime.now(pytz.timezone('Asia/Seoul'))
+            voice_channel_join_times[member.id] = join_time
+            
+            # 입장 시간을 테이블에 기록
+            c.execute('''
+                INSERT INTO voice_logging (datetime, nickname, joined, left, total_duration)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (join_time.strftime('%Y-%m-%d %H:%M:%S'), member.name, join_time.strftime('%Y-%m-%d %H:%M:%S'), None, None))
+
+            conn.commit()  # 커밋은 데이터베이스 작업이 끝난 후에 실행
+
+        except Exception as e:
+            print(f"An error occurred: {e}")
+        finally:
+            conn.close()  # 커밋 후에 연결 닫기
         embed = discord.Embed(title="음성 채널 입장", description=f"{kst_now.strftime('%Y-%m-%d %H:%M:%S')}\n{name}님이 음성 채널 {after.channel.name}에 들어왔습니다.", color=discord.Color.green())
         await channel.send(embed=embed)
     elif before.channel is not None and after.channel is None:
+        conn = connect_db()
+        c = conn.cursor()
+        try:
+            # 사용자가 퇴장할 때 입장 시간을 가져와서 사용 시간 계산
+            join_time = voice_channel_join_times.pop(member.id, None)
+            if join_time:
+                total_duration = datetime.now(pytz.timezone('Asia/Seoul')) - join_time
+                c.execute('''
+                    UPDATE voice_logging
+                    SET left = ?, total_duration = ?
+                    WHERE nickname = ? AND left IS NULL
+                ''', (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), str(total_duration), member.name))
+                conn.commit()
+        except Exception as e:
+            print(f"An error occurred: {e}")
+        finally:
+            conn.close()
         # 사용자가 음성 채널에서 나갔을 때
         embed = discord.Embed(title="음성 채널 퇴장", description=f"{kst_now.strftime('%Y-%m-%d %H:%M:%S')}\n{name}님이 음성 채널 {before.channel.name}을 떠났습니다.", color=discord.Color.red())
         await channel.send(embed=embed)
@@ -342,6 +390,59 @@ async def on_voice_state_update(member, before, after):
             color=discord.Color.blue()
         )
         await channel.send(embed=embed)
+
+# 서버 로그에 기본 레코드가 없을 때 추가
+def ensure_server_log_exists():
+    try:
+        conn = connect_db()
+        c = conn.cursor()
+        
+        # 현재 날짜를 가져옵니다.
+        today = datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d')
+        
+        # 오늘 날짜에 대한 레코드가 있는지 확인
+        c.execute("SELECT COUNT(*) FROM server_logging WHERE date(datetime) = ?", (today,))
+        if c.fetchone()[0] == 0:
+            # 기본값으로 새 레코드 삽입
+            c.execute('''
+                INSERT INTO server_logging (datetime, members_joined, members_left, total_members, access_usernames, daily_chat_count)
+                VALUES (?, 0, 0, ?, '', 0)
+            ''', (today, len(bot.guilds[0].members)))  # 현재 서버의 총원 수
+
+        conn.commit()
+    except Exception as e:
+        print(f"An error occurred: {e}")
+    finally:
+        conn.close()
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+
+    ensure_server_log_exists()  # 서버 로그 레코드 확인 및 삽입
+
+    try:
+        conn = connect_db()
+        c = conn.cursor()
+        
+        today = datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d')
+        
+        # 당일 누적 채팅 수 증가
+        c.execute("UPDATE server_logging SET daily_chat_count = daily_chat_count + 1 WHERE date(datetime) = ?", (today,))
+
+        conn.commit()
+    except Exception as e:
+        print(f"An error occurred: {e}")
+    finally:
+        conn.close()
+
+    # 봇의 다른 명령어들을 처리
+    await bot.process_commands(message)
+
+    print(f"{message.author.nick} : {message.content}")
+    # 명령어 처리
+    await bot.process_commands(message)
 
 @bot.event
 async def on_message_delete(message):
@@ -435,6 +536,8 @@ async def on_message_edit(before, after):
 
 @bot.event
 async def on_member_join(member):
+    global members_joined_today
+
     log_channel_id = 1270534169554063370
     log_channel = bot.get_channel(log_channel_id)
     kst_now = utc_now.replace(tzinfo=pytz.utc).astimezone(kst)
@@ -451,8 +554,33 @@ async def on_member_join(member):
         embed.set_footer(text=f"ID: {member.id}")
         await log_channel.send(embed=embed)
 
+    ensure_server_log_exists()  # 서버 로그 레코드 확인 및 삽입
+
+    try:
+        conn = connect_db()
+        c = conn.cursor()
+        
+        today = datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d')
+        
+        # 서버 입장 총원 증가
+        c.execute("UPDATE server_logging SET members_joined = members_joined + 1 WHERE date(datetime) = ?", (today,))
+        
+        # 현재 서버 총원
+        total_members = len(member.guild.members)
+        c.execute("UPDATE server_logging SET total_members = ? WHERE date(datetime) = ?", (total_members, today))
+
+        # 입장한 사용자 이름 추가
+        c.execute("UPDATE server_logging SET access_usernames = access_usernames || ? WHERE date(datetime) = ?", (f'{member.name},', today))
+
+        conn.commit()
+    except Exception as e:
+        print(f"An error occurred: {e}")
+    finally:
+        conn.close()
+
 @bot.event
 async def on_member_remove(member):
+    global members_left_today
     log_channel_id = 1270534169554063370
     log_channel = bot.get_channel(log_channel_id)
     utc_now = datetime.utcnow()
@@ -469,7 +597,26 @@ async def on_member_remove(member):
         embed.set_thumbnail(url=member.display_avatar.url)
         embed.set_footer(text=f"ID: {member.id}")
         await log_channel.send(embed=embed)
-        
 
+    ensure_server_log_exists()  # 서버 로그 레코드 확인 및 삽입
+
+    try:
+        conn = connect_db()
+        c = conn.cursor()
+
+        today = datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d')
+        
+        # 서버 탈퇴 총원 증가
+        c.execute("UPDATE server_logging SET members_left = members_left + 1 WHERE date(datetime) = ?", (today,))
+        
+        # 현재 서버 총원 업데이트
+        total_members = len(member.guild.members)
+        c.execute("UPDATE server_logging SET total_members = ? WHERE date(datetime) = ?", (total_members, today))
+
+        conn.commit()
+    except Exception as e:
+        print(f"An error occurred: {e}")
+    finally:
+        conn.close()
 
 bot.run(TOKEN)
