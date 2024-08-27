@@ -437,9 +437,6 @@ async def on_message(message):
     finally:
         conn.close()
 
-    # 봇의 다른 명령어들을 처리
-    await bot.process_commands(message)
-
     print(f"{message.author.nick} : {message.content}")
     # 명령어 처리
     await bot.process_commands(message)
