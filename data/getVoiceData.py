@@ -2,7 +2,7 @@ import pandas as pd
 from datetime import *
 
 def getTotalVoiceTime():
-    file = pd.read_csv("data/voice_logging.csv",encoding='ISO-8859-1')
+    file = pd.read_csv("data/voice_logging.csv", encoding='ISO-8859-1')
 
     total_time = timedelta()
 
@@ -14,10 +14,16 @@ def getTotalVoiceTime():
     print(total_time)
 
 def parse_time(time_str):
-    h, m, s = time_str.split(':')
-    s, ms = divmod(float(s),1)
-    return timedelta(hours=int(h), minutes=int(m), seconds=int(s), milliseconds=int(ms * 1000))
+    # '1 day, 2:03:04'와 같은 형식을 파싱합니다.
+    if 'day' in time_str:
+        days, time_part = time_str.split(' day, ')
+        days = int(days)
+    else:
+        days = 0
+        time_part = time_str
 
-
+    h, m, s = time_part.split(':')
+    s, ms = divmod(float(s), 1)
+    return timedelta(days=days, hours=int(h), minutes=int(m), seconds=int(s), milliseconds=int(ms * 1000))
 
 getTotalVoiceTime()

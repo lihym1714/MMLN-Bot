@@ -13,6 +13,9 @@ import re
 import io
 import aiohttp
 import sqlite3
+import logging
+from logging.handlers import TimedRotatingFileHandler
+import os
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -26,6 +29,30 @@ members_left_today = 0
 
 def connect_db():
     return sqlite3.connect('discord_logs.db')
+
+# 로그 디렉토리 설정
+log_directory = "logs"
+if not os.path.exists(log_directory):
+    os.makedirs(log_directory)
+
+# 로그 파일 이름
+log_file = os.path.join(log_directory, "discord_bot.log")
+
+# 로거 설정
+logger = logging.getLogger('discord')
+logger.setLevel(logging.INFO)
+
+# 핸들러 설정: 일별로 로그 파일을 나누기 위해 TimedRotatingFileHandler 사용
+handler = TimedRotatingFileHandler(log_file, when="midnight", interval=1)
+handler.suffix = "%Y-%m-%d"  # 로그 파일 이름에 날짜를 포함
+handler.setLevel(logging.INFO)
+
+# 포맷터 설정
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+
+# 핸들러를 로거에 추가
+logger.addHandler(handler)
 
 
 startDateTime = datetime.utcnow()
@@ -100,7 +127,7 @@ async def on_ready():
     activity=discord.Game("/도움말")
 )
 
-    print(f'Logged in as {bot.user}')
+    logger.info(f'Logged in as {bot.user}')
 
 # 일반 User 사용 가능 기능
     
@@ -175,7 +202,7 @@ async def stickyMsg(msg):
 
 @bot.command(name="출석", aliases=["출첵"])
 async def attendance(ctx):
-    print(f"{ctx.author.name}님이 출석하였습니다.")
+    logger.info(f"{ctx.author.name}님이 출석하였습니다.")
     return
 
 @bot.command(name="업타임")
@@ -356,7 +383,7 @@ async def on_voice_state_update(member, before, after):
             conn.commit()  # 커밋은 데이터베이스 작업이 끝난 후에 실행
 
         except Exception as e:
-            print(f"An error occurred: {e}")
+            logger.error(f"An error occurred: {e}")
         finally:
             conn.close()  # 커밋 후에 연결 닫기
         embed = discord.Embed(title="음성 채널 입장", description=f"{kst_now.strftime('%Y-%m-%d %H:%M:%S')}\n{name}님이 음성 채널 {after.channel.name}에 들어왔습니다.", color=discord.Color.green())
@@ -376,7 +403,7 @@ async def on_voice_state_update(member, before, after):
                 ''', (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), str(total_duration), member.name))
                 conn.commit()
         except Exception as e:
-            print(f"An error occurred: {e}")
+            logger.error(f"An error occurred: {e}")
         finally:
             conn.close()
         # 사용자가 음성 채널에서 나갔을 때
@@ -411,7 +438,7 @@ def ensure_server_log_exists():
 
         conn.commit()
     except Exception as e:
-        print(f"An error occurred: {e}")
+        logger.error(f"An error occurred: {e}")
     finally:
         conn.close()
 
@@ -433,11 +460,16 @@ async def on_message(message):
 
         conn.commit()
     except Exception as e:
-        print(f"An error occurred: {e}")
+        logger.error(f"An error occurred: {e}")
+        
     finally:
         conn.close()
 
-    print(f"{message.author.nick} : {message.content}")
+    utc_now = datetime.utcnow()
+    kst_now = utc_now.replace(tzinfo=pytz.utc).astimezone(kst)
+    
+    logger.info(f"[{message.channel.name}] {message.author.nick if message.author.nick else message.author.name} : {message.content}")
+
     # 명령어 처리
     await bot.process_commands(message)
 
@@ -458,6 +490,7 @@ async def on_message_delete(message):
     created_at = message.created_at.astimezone(KST).strftime('%Y-%m-%d %H:%M:%S') if message.created_at.astimezone(KST).strftime('%Y-%m-%d %H:%M:%S') else None
 
     if log_channel is not None:
+        log_msg = (f"메세지 삭제. [{message.channel.name}] 작성자 : {nickname} 삭제된 내용 : {message.content}")
         if message.attachments:
             for attachment in message.attachments:
                 # 파일을 다운로드하고 로그 채널에 전송
@@ -497,7 +530,9 @@ async def on_message_delete(message):
                 embed.add_field(name="답장 대상",
                                 value=f'**작성자**: {replied_nickname}\n'
                                       f'**메시지 내용**: {replied_message.content or "내용 없음"}')
+                log_msg += f'\n\t\t\t\t\t\t답장 대상. 작성자 : {replied_nickname}\n\t\t\t\t\t\t메시지 내용 : {replied_message.content or "내용 없음"}'
                 
+        logger.info(log_msg)
         await log_channel.send(embed=embed)
 
 
@@ -529,6 +564,7 @@ async def on_message_edit(before, after):
         embed.add_field(name="수정 후 내용", value=after.content or "내용 없음", inline=False)
         embed.set_footer(text=f"메시지 ID: {before.id}")
 
+        logger.info(f"메세지 수정. [{before.channel.name}] 작성자 : {nickname}\n\t\t\t\t\t\t수정 전 내용 : {before.content}\n\t\t\t\t\t\t수정 후 내용 : {after.content}")
         await log_channel.send(embed=embed)
 
 @bot.event
@@ -549,6 +585,7 @@ async def on_member_join(member):
         )
         embed.set_thumbnail(url=member.display_avatar.url)
         embed.set_footer(text=f"ID: {member.id}")
+        logger.info(f"멤버 입장 : {nickname}")
         await log_channel.send(embed=embed)
 
     ensure_server_log_exists()  # 서버 로그 레코드 확인 및 삽입
@@ -569,9 +606,14 @@ async def on_member_join(member):
         # 입장한 사용자 이름 추가
         c.execute("UPDATE server_logging SET access_usernames = access_usernames || ? WHERE date(datetime) = ?", (f'{member.name},', today))
 
+        # 당일 access 총원
+        c.execute("SELECT members_joined,members_left FROM server_logging WHERE date(datetime) = ?", (today,))
+        total_count = c.fetchall().pop()
+        c.execute("UPDATE server_logging SET total_count = ? WHERE date(datetime) = ?", (f'{total_count[0]-total_count[1]},', today))
+
         conn.commit()
     except Exception as e:
-        print(f"An error occurred: {e}")
+        logger.error(f"An error occurred: {e}")
     finally:
         conn.close()
 
@@ -593,6 +635,7 @@ async def on_member_remove(member):
         )
         embed.set_thumbnail(url=member.display_avatar.url)
         embed.set_footer(text=f"ID: {member.id}")
+        logger.info(f"멤버 탈퇴 : {nickname}")
         await log_channel.send(embed=embed)
 
     ensure_server_log_exists()  # 서버 로그 레코드 확인 및 삽입
@@ -610,9 +653,17 @@ async def on_member_remove(member):
         total_members = len(member.guild.members)
         c.execute("UPDATE server_logging SET total_members = ? WHERE date(datetime) = ?", (total_members, today))
 
+        # 입장한 사용자 이름 추가
+        c.execute("UPDATE server_logging SET left_username = left_username || ? WHERE date(datetime) = ?", (f'{member.name},', today))
+
+        # 당일 access 총원
+        c.execute("SELECT members_joined,members_left FROM server_logging WHERE date(datetime) = ?", (today,))
+        total_count = c.fetchall().pop()
+        c.execute("UPDATE server_logging SET total_count = ? WHERE date(datetime) = ?", (f'{total_count[0]-total_count[1]},', today))
+
         conn.commit()
     except Exception as e:
-        print(f"An error occurred: {e}")
+        logger.error(f"An error occurred: {e}")
     finally:
         conn.close()
 
